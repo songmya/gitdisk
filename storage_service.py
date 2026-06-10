@@ -11,13 +11,30 @@ from database import get_db, FileDB
 from github_io import GitHubReleaseAssets, sha256_file, safe_asset_name
 
 
-async def store_local_file(*, local_path: str | Path, file_name: str, mime_type: str, dest_path: str) -> dict:
-    """Store a local file as one GitHub asset or multipart assets and add DB rows."""
+async def store_local_file(*, local_path: str | Path, file_name: str, mime_type: str, dest_path: str,
+                           overwrite: bool = False) -> dict:
+    """Store a local file as one GitHub asset or multipart assets and add DB rows.
+
+    When overwrite=True, any existing active file(s) with the same path/name are
+    removed from GitHub and the local index before the new file is indexed. This
+    gives WebDAV clients normal replace semantics for PUT on an existing path.
+    """
     path = Path(local_path)
     size = path.stat().st_size
     storage = GitHubReleaseAssets()
     threshold = max(1, config.GITHUB_SINGLE_UPLOAD_THRESHOLD_MB) * 1024 * 1024
     chunk_size = max(1, config.GITHUB_CHUNK_SIZE_MB) * 1024 * 1024
+
+    if overwrite:
+        db = await get_db()
+        try:
+            existing_files = await FileDB(db).find_all_by_path_name(dest_path, file_name)
+        finally:
+            await db.close()
+        for existing in existing_files:
+            ok, errors = await delete_file_and_assets(existing["id"])
+            if errors:
+                raise RuntimeError("同名文件覆盖失败，删除旧文件失败：" + "; ".join(errors))
 
     if size <= threshold:
         meta = await storage.upload_file(path, file_name, mime_type)

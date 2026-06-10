@@ -128,6 +128,13 @@ class FileDB:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def find_all_by_path_name(self, path: str, file_name: str) -> list[dict]:
+        cursor = await self.db.execute(
+            "SELECT * FROM files WHERE path=? AND file_name=? AND deleted=0 ORDER BY id DESC",
+            (normalize_path(path), file_name),
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
     async def list_files(self, path: str = "/", search: str = "", limit: int = 50, offset: int = 0) -> list[dict]:
         if search:
             cursor = await self.db.execute(

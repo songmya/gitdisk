@@ -173,7 +173,13 @@ class UploadSink(io.RawIOBase):
             name = base_name(self.dav_path)
             dest = parent_path(self.dav_path)
             mime_type = self.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
-            run_async(store_local_file(local_path=self._tmp.name, file_name=name, mime_type=mime_type, dest_path=dest))
+            run_async(store_local_file(
+                local_path=self._tmp.name,
+                file_name=name,
+                mime_type=mime_type,
+                dest_path=dest,
+                overwrite=True,
+            ))
         finally:
             try:
                 self._tmp.close()
