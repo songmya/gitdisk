@@ -1,145 +1,446 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GitDisk</title>
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #1f2937; }
-    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-    h1 { margin: 0 0 8px; }
-    .muted { color: #6b7280; }
-    .bar { display:flex; gap:8px; flex-wrap:wrap; margin: 20px 0; }
-    input, button { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
-    button { background:#111827; color:white; cursor:pointer; }
-    button.secondary { background:#f3f4f6; color:#111827; }
-    table { width:100%; border-collapse: collapse; margin-top: 16px; }
-    th, td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align:left; }
-    tr:hover { background:#f9fafb; }
-    .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .danger { background:#dc2626; }
-    #msg { margin-top:12px; white-space:pre-wrap; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitDisk - GitHub Release Assets 网盘</title>
+<style>
+:root {
+  --bg:#0f172a; --bg2:#111c31; --bg3:#1e293b; --bg4:#334155;
+  --fg:#f8fafc; --fg2:#94a3b8; --muted:#64748b;
+  --accent:#22c55e; --accent2:#16a34a; --blue:#3b82f6;
+  --red:#ef4444; --yellow:#eab308; --purple:#a855f7;
+  --radius:12px; --radius-sm:8px; --shadow:0 14px 42px rgba(0,0,0,.32);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  min-height:100vh;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans SC",sans-serif;
+  color:var(--fg);
+  background:
+    radial-gradient(circle at top left, rgba(34,197,94,.16), transparent 32rem),
+    radial-gradient(circle at top right, rgba(59,130,246,.14), transparent 30rem),
+    var(--bg);
+}
+button,input { font:inherit; }
+button {
+  border:1px solid rgba(148,163,184,.24); border-radius:var(--radius-sm);
+  padding:8px 13px; background:var(--bg3); color:var(--fg); cursor:pointer;
+  transition:transform .15s ease, border-color .15s ease, background .15s ease, color .15s ease;
+}
+button:hover { transform:translateY(-1px); border-color:var(--accent); color:#dcfce7; }
+button.primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); border-color:transparent; color:#052e16; font-weight:700; }
+button.primary:hover { color:#052e16; filter:brightness(1.05); }
+button.secondary { background:rgba(30,41,59,.78); }
+button.danger:hover { border-color:var(--red); color:#fecaca; }
+button:disabled { opacity:.45; cursor:not-allowed; transform:none; }
+input {
+  padding:9px 12px; border-radius:var(--radius-sm); border:1px solid rgba(148,163,184,.26);
+  background:rgba(15,23,42,.82); color:var(--fg); outline:none;
+}
+input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(34,197,94,.13); }
+input::placeholder { color:var(--muted); }
+header {
+  position:sticky; top:0; z-index:20; display:flex; justify-content:space-between; align-items:center; gap:18px;
+  padding:14px 22px; background:rgba(15,23,42,.82); backdrop-filter:blur(18px);
+  border-bottom:1px solid rgba(148,163,184,.16);
+}
+.brand { display:flex; align-items:center; gap:12px; }
+.logo {
+  width:40px; height:40px; border-radius:14px; display:grid; place-items:center;
+  background:linear-gradient(135deg,rgba(34,197,94,.26),rgba(59,130,246,.24));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);
+}
+.brand h1 { font-size:1.18rem; letter-spacing:.2px; }
+.brand .sub { color:var(--fg2); font-size:.78rem; margin-top:2px; }
+.stats { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+.stat-pill {
+  background:rgba(30,41,59,.72); border:1px solid rgba(148,163,184,.18); border-radius:999px;
+  padding:7px 11px; color:var(--fg2); font-size:.82rem;
+}
+.stat-pill strong { color:var(--fg); }
+main { max-width:1240px; margin:0 auto; padding:18px; }
+.toolbar {
+  display:grid; grid-template-columns:auto auto auto auto 1fr auto auto; gap:8px; align-items:center; margin-bottom:14px;
+}
+.search { min-width:190px; }
+.token { max-width:220px; }
+.pathbar {
+  display:flex; gap:8px; align-items:center; margin-bottom:14px; flex-wrap:wrap;
+}
+.path-input { min-width:220px; flex:1; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; }
+.breadcrumb { display:flex; gap:6px; align-items:center; flex-wrap:wrap; color:var(--fg2); font-size:.88rem; margin:4px 0 14px; }
+.breadcrumb a { color:#86efac; text-decoration:none; cursor:pointer; }
+.breadcrumb a:hover { text-decoration:underline; }
+.panel, .file-list, .webdav-card, .upload-zone {
+  background:rgba(17,28,49,.86); border:1px solid rgba(148,163,184,.16);
+  border-radius:var(--radius); box-shadow:var(--shadow);
+}
+.upload-zone {
+  display:none; margin-bottom:14px; padding:30px; text-align:center; color:var(--fg2);
+  border-style:dashed; cursor:pointer;
+}
+.upload-zone.show { display:block; }
+.upload-zone:hover, .upload-zone.dragover { border-color:var(--accent); background:rgba(34,197,94,.07); color:var(--fg); }
+.upload-zone .big { font-size:2rem; margin-bottom:8px; }
+.webdav-card { display:none; margin-bottom:14px; padding:14px; justify-content:space-between; gap:16px; align-items:center; }
+.webdav-card.show { display:flex; }
+.webdav-card .title { color:#86efac; font-weight:800; margin-bottom:5px; }
+.webdav-card .desc { color:var(--fg2); font-size:.88rem; line-height:1.7; }
+.webdav-card code { background:rgba(15,23,42,.9); color:var(--fg); padding:2px 7px; border-radius:6px; }
+.webdav-card .actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.upload-panel { display:none; margin-bottom:14px; overflow:hidden; }
+.upload-panel.show { display:block; }
+.upload-panel-header { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 14px; background:rgba(51,65,85,.48); }
+.upload-panel-header h2 { font-size:.98rem; }
+.upload-panel-header small { color:var(--fg2); }
+.upload-list { display:flex; flex-direction:column; }
+.upload-item { display:grid; grid-template-columns:1fr auto; gap:12px; padding:12px 14px; border-top:1px solid rgba(148,163,184,.13); }
+.upload-name { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.upload-meta { margin-top:4px; color:var(--fg2); font-size:.8rem; display:flex; gap:10px; flex-wrap:wrap; }
+.progress-label { margin-top:8px; color:var(--fg2); font-size:.76rem; }
+.progress { height:8px; margin-top:5px; border-radius:999px; overflow:hidden; background:rgba(15,23,42,.9); }
+.progress-bar { width:0%; height:100%; background:linear-gradient(90deg,var(--blue),var(--accent)); transition:width .18s ease; }
+.upload-status-done .progress-bar { background:var(--accent); }
+.upload-status-error .progress-bar { background:var(--red); }
+.file-list { overflow:hidden; }
+table { width:100%; border-collapse:collapse; }
+th { text-align:left; padding:11px 14px; color:var(--fg2); background:rgba(51,65,85,.52); font-size:.78rem; text-transform:uppercase; letter-spacing:.06em; }
+td { padding:11px 14px; border-top:1px solid rgba(148,163,184,.12); font-size:.91rem; }
+tr:hover td { background:rgba(34,197,94,.045); }
+.name { font-weight:650; max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.name.clickable { cursor:pointer; }
+.size,.time,.type { color:var(--fg2); white-space:nowrap; }
+.actions { display:flex; gap:6px; flex-wrap:wrap; }
+.actions button { padding:5px 9px; font-size:.8rem; }
+.empty { text-align:center; padding:44px 20px; color:var(--fg2); }
+.empty .icon { font-size:2.7rem; margin-bottom:8px; }
+.pagination { display:flex; justify-content:center; align-items:center; gap:8px; margin-top:16px; color:var(--fg2); }
+.toast { position:fixed; right:20px; bottom:20px; z-index:80; padding:10px 15px; border-radius:10px; color:white; box-shadow:var(--shadow); animation:slideIn .22s ease; max-width:min(440px,calc(100vw - 40px)); }
+.toast.success { background:var(--accent2); } .toast.error { background:var(--red); } .toast.info { background:var(--blue); }
+@keyframes slideIn { from { transform:translateX(20px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+.modal { display:none; position:fixed; inset:0; z-index:60; background:rgba(2,6,23,.68); align-items:center; justify-content:center; padding:18px; }
+.modal.show { display:flex; }
+.modal-content { width:min(560px,100%); background:var(--bg2); border:1px solid rgba(148,163,184,.18); border-radius:16px; box-shadow:var(--shadow); padding:20px; }
+.modal-content h3 { margin-bottom:12px; }
+.detail { display:grid; gap:9px; color:var(--fg2); }
+.detail div { display:grid; grid-template-columns:88px 1fr; gap:8px; }
+.detail span:last-child { color:var(--fg); word-break:break-all; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+@media (max-width:900px) {
+  .toolbar { grid-template-columns:repeat(3,auto) 1fr; }
+  .token { grid-column:1 / -1; max-width:none; }
+}
+@media (max-width:720px) {
+  header { align-items:flex-start; flex-direction:column; padding:12px 14px; }
+  main { padding:12px; }
+  .toolbar { grid-template-columns:1fr 1fr; }
+  .toolbar input { grid-column:1 / -1; }
+  .pathbar { display:grid; grid-template-columns:1fr auto; }
+  .path-input { min-width:0; }
+  .webdav-card { flex-direction:column; align-items:flex-start; }
+  .webdav-card .actions { justify-content:flex-start; }
+  .upload-item { grid-template-columns:1fr; }
+  th:nth-child(3),td:nth-child(3),th:nth-child(4),td:nth-child(4) { display:none; }
+  .name { max-width:180px; }
+}
+</style>
 </head>
 <body>
-  <header>
+<header>
+  <div class="brand">
+    <div class="logo">🟢</div>
     <div>
       <h1>GitDisk</h1>
-      <div class="muted">GitHub Release Assets backed drive</div>
+      <div class="sub">GitHub Release Assets backed drive</div>
     </div>
-    <div id="stats" class="muted"></div>
-  </header>
-
-  <div class="bar">
-    <input id="token" placeholder="Bearer Token（可选）" type="password" />
-    <input id="path" value="/" class="path" />
-    <button onclick="loadFiles()">刷新</button>
-    <input id="search" placeholder="搜索" />
-    <button onclick="loadFiles()">搜索</button>
+  </div>
+  <div class="stats">
+    <div class="stat-pill">文件 <strong id="stat-files">0</strong></div>
+    <div class="stat-pill">容量 <strong id="stat-size">0 B</strong></div>
+    <div class="stat-pill">目录 <strong id="stat-dirs">0</strong></div>
+  </div>
+</header>
+<main>
+  <div class="toolbar">
+    <button class="primary" onclick="toggleUpload()">📤 上传</button>
+    <button class="secondary" onclick="toggleWebDAV()">🌐 WebDAV</button>
+    <button class="secondary" onclick="loadTrash()">♻️ 回收站</button>
+    <button class="secondary" onclick="newFolder()">📁 新建目录</button>
+    <input id="search" class="search" placeholder="🔍 搜索文件名或标签..." onkeydown="if(event.key==='Enter')doSearch()">
+    <button onclick="doSearch()">搜索</button>
+    <button class="secondary" onclick="refresh()">🔄 刷新</button>
+    <input id="token" class="token" type="password" placeholder="Bearer Token（上传/删除需要时填写）">
   </div>
 
-  <div class="bar">
-    <input id="dirName" placeholder="新目录路径，如 /books" />
-    <button class="secondary" onclick="createDir()">创建目录</button>
-    <input id="file" type="file" multiple />
-    <button onclick="uploadFile()">上传选中文件</button>
+  <div class="pathbar">
+    <input id="path" class="path-input" value="/" onkeydown="if(event.key==='Enter')go(this.value)">
+    <button class="secondary" onclick="go(document.getElementById('path').value || '/')">跳转</button>
   </div>
 
-  <div id="msg" class="muted"></div>
+  <section id="upload-zone" class="upload-zone" ondrop="onDrop(event)" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" onclick="document.getElementById('file-input').click()">
+    <div class="big">📂</div>
+    <div>拖拽文件到此处，或点击选择文件</div>
+    <small>上传目标：<span id="upload-target">/</span>；WebDAV 同名上传已支持直接覆盖。</small>
+  </section>
+  <input id="file-input" type="file" multiple hidden onchange="uploadFiles(this.files)">
 
-  <table>
-    <thead><tr><th>类型</th><th>名称</th><th>大小</th><th>时间</th><th>操作</th></tr></thead>
-    <tbody id="rows"></tbody>
-  </table>
+  <section id="upload-panel" class="panel upload-panel">
+    <div class="upload-panel-header">
+      <div><h2>上传队列</h2><small>显示浏览器上传到 GitDisk 的进度；完成后会刷新文件列表。</small></div>
+      <button class="secondary" onclick="clearFinishedUploads()">清除已完成</button>
+    </div>
+    <div id="upload-list" class="upload-list"></div>
+  </section>
+
+  <section id="webdav-card" class="webdav-card">
+    <div>
+      <div class="title">🌐 WebDAV</div>
+      <div class="desc">挂载路径：<code id="webdav-url">/dav/</code></div>
+      <div class="desc">可在 Finder、Windows 网络位置、Zotero、Infuse 等支持 WebDAV 的客户端中使用。</div>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="openWebDAV()">打开</button>
+      <button onclick="copyWebDAVUrl()">复制地址</button>
+      <button onclick="toggleWebDAV()">收起</button>
+    </div>
+  </section>
+
+  <div id="breadcrumb" class="breadcrumb"></div>
+  <div class="file-list">
+    <table>
+      <thead><tr><th>名称</th><th>大小</th><th>类型</th><th>时间</th><th>操作</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div id="pagination" class="pagination"></div>
+</main>
+
+<div id="detail-modal" class="modal" onclick="if(event.target===this)closeModal()">
+  <div id="modal-body" class="modal-content"></div>
+</div>
 
 <script>
-let currentPath = '/';
+const state = { path:'/', page:1, limit:30, search:'', view:'files', uploads:new Map(), lastFiles:[] };
+
 function authHeaders() {
   const t = document.getElementById('token').value.trim();
-  return t ? {Authorization: 'Bearer ' + t} : {};
+  return t ? { Authorization:'Bearer ' + t } : {};
 }
-function joinPath(base, name) {
-  if (base === '/') return '/' + name;
-  return base.replace(/\/$/, '') + '/' + name;
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
+function normalizePath(p) {
+  p = String(p || '/').trim().replace(/\\/g,'/');
+  if (!p.startsWith('/')) p = '/' + p;
+  p = '/' + p.split('/').filter(Boolean).join('/');
+  return p === '//' ? '/' : p;
 }
-function msg(text) { document.getElementById('msg').textContent = text || ''; }
+function parentPath(p) { p = normalizePath(p); if (p === '/') return '/'; return '/' + p.split('/').filter(Boolean).slice(0,-1).join('/') || '/'; }
+function setPath(p) { state.path = normalizePath(p); document.getElementById('path').value = state.path; document.getElementById('upload-target').textContent = state.path; }
+function toast(text, type='info') {
+  const div = document.createElement('div'); div.className = 'toast ' + type; div.textContent = text;
+  document.body.appendChild(div); setTimeout(() => div.remove(), 3600);
+}
+function humanError(text) { try { const d = JSON.parse(text); return d.detail || d.message || text; } catch { return text; } }
+function formatSize(bytes) {
+  bytes = Number(bytes || 0); if (bytes < 1024) return bytes + ' B';
+  const units = ['KB','MB','GB','TB']; let n = bytes / 1024; let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n >= 10 || i === 0 ? 1 : 2) + ' ' + units[i];
+}
+function fileIcon(mime, name='') {
+  mime = String(mime || ''); name = String(name || '').toLowerCase();
+  if (mime.startsWith('image/')) return '🖼️';
+  if (mime.startsWith('video/')) return '🎞️';
+  if (mime.startsWith('audio/')) return '🎵';
+  if (mime.includes('pdf') || name.endsWith('.pdf')) return '📕';
+  if (/\.(zip|rar|7z|tar|gz)$/.test(name)) return '🗜️';
+  if (/\.(md|txt|log|json|yml|yaml|py|js|ts|html|css)$/.test(name)) return '📝';
+  return '📄';
+}
+
 async function loadStats() {
-  const r = await fetch('/api/stats');
-  const s = await r.json();
-  document.getElementById('stats').textContent = `${s.file_count} 文件 · ${s.total_size_fmt} · ${s.dir_count} 目录`;
+  try {
+    const r = await fetch('/api/stats'); const s = await r.json();
+    document.getElementById('stat-files').textContent = s.file_count ?? 0;
+    document.getElementById('stat-size').textContent = s.total_size_fmt || formatSize(s.total_size);
+    document.getElementById('stat-dirs').textContent = s.dir_count ?? 0;
+  } catch(e) { console.error(e); }
+}
+function renderBreadcrumb() {
+  const parts = state.path.split('/').filter(Boolean);
+  let html = `<a onclick="go('/')">根目录</a>`;
+  let acc = '';
+  parts.forEach((p) => { acc += '/' + p; html += ` <span>/</span> <a onclick="go('${esc(acc)}')">${esc(p)}</a>`; });
+  if (state.view === 'trash') html += ` <span>/</span> <strong>回收站</strong>`;
+  document.getElementById('breadcrumb').innerHTML = html;
 }
 async function loadFiles() {
-  currentPath = document.getElementById('path').value || '/';
-  const search = document.getElementById('search').value || '';
-  const r = await fetch(`/api/files?path=${encodeURIComponent(currentPath)}&search=${encodeURIComponent(search)}`);
-  const data = await r.json();
-  const rows = document.getElementById('rows');
-  rows.innerHTML = '';
-  if (currentPath !== '/' && !search) {
-    const up = currentPath.split('/').slice(0,-1).join('/') || '/';
-    rows.innerHTML += `<tr><td>⬆️</td><td><a href="#" onclick="go('${up}')">..</a></td><td></td><td></td><td></td></tr>`;
-  }
-  for (const d of data.dirs || []) {
-    rows.innerHTML += `<tr><td>📁</td><td><a href="#" onclick="go('${d.path}')">${escapeHtml(d.name)}</a></td><td></td><td>${d.created_at || ''}</td><td></td></tr>`;
-  }
-  for (const f of data.files || []) {
-    rows.innerHTML += `<tr><td>📄</td><td>${escapeHtml(f.file_name)}</td><td>${f.size_fmt}</td><td>${f.created_at}</td><td><button class="secondary" onclick="downloadFile(${f.id})">下载</button> <button class="danger" onclick="deleteFile(${f.id})">删除</button></td></tr>`;
-  }
-  await loadStats();
-}
-function go(p) { document.getElementById('path').value = p; document.getElementById('search').value=''; loadFiles(); }
-function humanError(text) {
+  state.view = 'files';
+  setPath(document.getElementById('path').value || state.path);
+  const tbody = document.getElementById('rows');
+  tbody.innerHTML = '<tr><td colspan="5" class="empty">加载中...</td></tr>';
+  renderBreadcrumb();
+  const params = new URLSearchParams({ path:state.path, search:state.search, page:String(state.page), limit:String(state.limit) });
   try {
-    const data = JSON.parse(text);
-    return data.detail || data.message || text;
-  } catch (_) {
-    return text;
+    const r = await fetch('/api/files?' + params.toString());
+    if (!r.ok) throw new Error(humanError(await r.text()));
+    const data = await r.json();
+    state.lastFiles = data.files || [];
+    renderTable(data.dirs || [], data.files || []);
+    renderPagination(data.total || 0, data.page || state.page, data.limit || state.limit);
+    await loadStats();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">❌ ${esc(e.message || e)}</td></tr>`;
   }
 }
-async function createDir() {
-  const p = document.getElementById('dirName').value.trim();
-  if (!p) {
-    msg('请输入目录路径，例如：/books');
-    return;
-  }
-  const r = await fetch('/api/dirs?path=' + encodeURIComponent(p), {method:'POST', headers: authHeaders()});
-  const text = await r.text();
-  msg(r.ok ? `目录已创建：${p}` : `创建目录失败：${humanError(text)}`);
-  if (r.ok) document.getElementById('dirName').value = '';
+function renderTable(dirs, files) {
+  const tbody = document.getElementById('rows');
+  let rows = '';
+  if (state.path !== '/' && !state.search) rows += `<tr><td class="name clickable" onclick="go('${esc(parentPath(state.path))}')">⬆️ ..</td><td></td><td class="type">上级目录</td><td></td><td></td></tr>`;
+  dirs.forEach(d => rows += `<tr><td class="name clickable" onclick="go('${esc(d.path)}')">📁 ${esc(d.name)}/</td><td class="size">-</td><td class="type">目录</td><td class="time">${esc(d.created_at || '')}</td><td></td></tr>`);
+  files.forEach(f => rows += `<tr>
+    <td class="name clickable" onclick="showDetail(${f.id})">${fileIcon(f.mime_type, f.file_name)} ${esc(f.file_name)}</td>
+    <td class="size">${esc(f.size_fmt || formatSize(f.file_size))}</td>
+    <td class="type">${esc(f.is_multipart ? 'multipart' : (f.mime_type || 'file'))}</td>
+    <td class="time">${esc(f.created_at || '')}</td>
+    <td><div class="actions">
+      <button onclick="event.stopPropagation();downloadFile(${f.id})">⬇️ 下载</button>
+      <button onclick="event.stopPropagation();copyDownload(${f.id})">🔗 链接</button>
+      <button class="danger" onclick="event.stopPropagation();deleteFile(${f.id}, '${esc(f.file_name)}')">🗑️ 删除</button>
+    </div></td>
+  </tr>`);
+  if (!rows) rows = '<tr><td colspan="5" class="empty"><div class="icon">📭</div>此目录为空</td></tr>';
+  tbody.innerHTML = rows;
+}
+function renderPagination(total, page, limit) {
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const div = document.getElementById('pagination');
+  if (pages <= 1) { div.innerHTML = ''; return; }
+  div.innerHTML = `<button ${page<=1?'disabled':''} onclick="goPage(${page-1})">‹ 上一页</button><span>${page} / ${pages}</span><button ${page>=pages?'disabled':''} onclick="goPage(${page+1})">下一页 ›</button>`;
+}
+function go(p) { setPath(p); state.page = 1; state.search = ''; document.getElementById('search').value = ''; loadFiles(); }
+function goPage(p) { state.page = p; state.view === 'trash' ? loadTrash() : loadFiles(); }
+function doSearch() { state.search = document.getElementById('search').value.trim(); state.page = 1; loadFiles(); }
+function refresh() { state.view === 'trash' ? loadTrash() : loadFiles(); }
+
+function toggleUpload() { document.getElementById('upload-zone').classList.toggle('show'); }
+function onDragOver(e) { e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+function onDragLeave(e) { e.currentTarget.classList.remove('dragover'); }
+function onDrop(e) { e.preventDefault(); e.currentTarget.classList.remove('dragover'); uploadFiles(e.dataTransfer.files); }
+function addUpload(file) {
+  const id = Date.now() + '-' + Math.random().toString(16).slice(2);
+  state.uploads.set(id, { file, status:'pending', progress:0, label:'等待上传' }); renderUploads(); return id;
+}
+function updateUpload(id, patch) { Object.assign(state.uploads.get(id), patch); renderUploads(); }
+function renderUploads() {
+  const panel = document.getElementById('upload-panel'); const list = document.getElementById('upload-list');
+  if (!state.uploads.size) { panel.classList.remove('show'); list.innerHTML = ''; return; }
+  panel.classList.add('show');
+  list.innerHTML = [...state.uploads.entries()].map(([id,u]) => `<div class="upload-item upload-status-${u.status}">
+    <div><div class="upload-name">${fileIcon(u.file.type, u.file.name)} ${esc(u.file.name)}</div>
+    <div class="upload-meta"><span>${formatSize(u.file.size)}</span><span>${esc(u.label)}</span></div>
+    <div class="progress-label">${Math.round(u.progress || 0)}%</div><div class="progress"><div class="progress-bar" style="width:${Math.max(0, Math.min(100, u.progress || 0))}%"></div></div></div>
+    <div class="actions"><button class="secondary" onclick="state.uploads.delete('${id}');renderUploads()">移除</button></div>
+  </div>`).join('');
+}
+function clearFinishedUploads() { for (const [id,u] of state.uploads) if (['done','error'].includes(u.status)) state.uploads.delete(id); renderUploads(); }
+async function uploadFiles(fileList) {
+  const files = Array.from(fileList || []); if (!files.length) return;
+  for (const file of files) await uploadOne(file);
+  document.getElementById('file-input').value = '';
   await loadFiles();
 }
-async function uploadFile() {
-  const input = document.getElementById('file');
-  const selected = Array.from(input.files || []);
-  if (!selected.length) {
-    msg('请先选择一个或多个文件');
-    return;
-  }
-  const fd = new FormData();
-  for (const f of selected) fd.append('files', f);
-  msg(`正在上传 ${selected.length} 个文件...`);
-  const r = await fetch('/api/upload?path=' + encodeURIComponent(currentPath), {method:'POST', headers: authHeaders(), body: fd});
-  const text = await r.text();
-  if (r.ok) {
-    const data = JSON.parse(text);
-    msg(`上传完成：${data.count} 个文件`);
-  } else {
-    msg(`上传失败：${humanError(text)}`);
-  }
-  input.value = '';
-  await loadFiles();
+function uploadOne(file) {
+  const id = addUpload(file);
+  return new Promise((resolve) => {
+    const fd = new FormData(); fd.append('files', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload?path=' + encodeURIComponent(state.path));
+    const token = document.getElementById('token').value.trim(); if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) updateUpload(id, { status:'uploading', progress:e.loaded / e.total * 100, label:'正在上传到服务器' }); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { updateUpload(id, { status:'done', progress:100, label:'上传完成' }); toast(`上传完成：${file.name}`, 'success'); }
+      else { updateUpload(id, { status:'error', progress:100, label:humanError(xhr.responseText) }); toast(`上传失败：${file.name}`, 'error'); }
+      resolve();
+    };
+    xhr.onerror = () => { updateUpload(id, { status:'error', progress:100, label:'网络错误' }); toast(`上传失败：${file.name}`, 'error'); resolve(); };
+    updateUpload(id, { status:'uploading', label:'准备上传' }); xhr.send(fd);
+  });
+}
+async function newFolder() {
+  const raw = prompt('输入新目录名称或完整路径（例如 books 或 /books/2026）：');
+  if (!raw) return;
+  const path = raw.startsWith('/') ? normalizePath(raw) : normalizePath(state.path.replace(/\/$/,'') + '/' + raw);
+  try {
+    const r = await fetch('/api/dirs?path=' + encodeURIComponent(path), { method:'POST', headers:authHeaders() });
+    if (!r.ok) throw new Error(humanError(await r.text()));
+    toast('目录已创建：' + path, 'success'); await loadFiles();
+  } catch(e) { toast('创建目录失败：' + (e.message || e), 'error'); }
 }
 function downloadFile(id) { window.open('/api/download/' + id, '_blank'); }
-async function deleteFile(id) {
-  if (!confirm('确定删除？这会同时删除 GitHub Release Asset 和本地索引，不能从回收站恢复。')) return;
-  msg('正在删除 GitHub 文件...');
-  const r = await fetch('/api/files/' + id, {method:'DELETE', headers: authHeaders()});
-  const text = await r.text();
-  msg(r.ok ? '已从 GitHub 和本地索引删除' : `删除失败：${humanError(text)}`);
-  await loadFiles();
+async function copyDownload(id) {
+  const url = location.origin + '/api/download/' + id;
+  await navigator.clipboard.writeText(url); toast('下载链接已复制', 'success');
 }
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
-loadFiles();
+async function deleteFile(id, name) {
+  if (!confirm(`确定删除「${name || id}」？\n这会同时删除 GitHub Release Asset 和本地索引，通常不能恢复。`)) return;
+  try {
+    const r = await fetch('/api/files/' + id, { method:'DELETE', headers:authHeaders() });
+    if (!r.ok) throw new Error(humanError(await r.text()));
+    toast('已删除', 'success'); await loadFiles(); await loadStats();
+  } catch(e) { toast('删除失败：' + (e.message || e), 'error'); }
+}
+async function loadTrash() {
+  state.view = 'trash'; renderBreadcrumb(); document.getElementById('pagination').innerHTML = '';
+  const tbody = document.getElementById('rows'); tbody.innerHTML = '<tr><td colspan="5" class="empty">加载回收站...</td></tr>';
+  try {
+    const r = await fetch('/api/trash?limit=100&offset=0', { headers:authHeaders() });
+    if (!r.ok) throw new Error(humanError(await r.text()));
+    const data = await r.json(); const files = data.files || [];
+    if (!files.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty"><div class="icon">♻️</div>回收站为空</td></tr>'; return; }
+    tbody.innerHTML = files.map(f => `<tr>
+      <td class="name">${fileIcon(f.mime_type, f.file_name)} ${esc(f.file_name)}</td>
+      <td class="size">${esc(f.size_fmt || formatSize(f.file_size))}</td>
+      <td class="type">${esc(f.deleted_by || 'deleted')}</td>
+      <td class="time">${esc(f.deleted_at || f.created_at || '')}</td>
+      <td><div class="actions"><button onclick="restoreFile(${f.id})">↩️ 恢复</button><button class="danger" onclick="purgeFile(${f.id})">🔥 清除</button></div></td>
+    </tr>`).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" class="empty">❌ ${esc(e.message || e)}</td></tr>`; }
+}
+async function restoreFile(id) {
+  try { const r = await fetch('/api/trash/' + id + '/restore', { method:'POST', headers:authHeaders() }); if (!r.ok) throw new Error(humanError(await r.text())); toast('已恢复', 'success'); loadTrash(); loadStats(); }
+  catch(e) { toast('恢复失败：' + (e.message || e), 'error'); }
+}
+async function purgeFile(id) {
+  if (!confirm('确定彻底清除这个回收站文件？')) return;
+  try { const r = await fetch('/api/trash/' + id, { method:'DELETE', headers:authHeaders() }); if (!r.ok) throw new Error(humanError(await r.text())); toast('已清除', 'success'); loadTrash(); loadStats(); }
+  catch(e) { toast('清除失败：' + (e.message || e), 'error'); }
+}
+function showDetail(id) {
+  const f = state.lastFiles.find(x => Number(x.id) === Number(id)); if (!f) return;
+  document.getElementById('modal-body').innerHTML = `<h3>${fileIcon(f.mime_type, f.file_name)} ${esc(f.file_name)}</h3>
+    <div class="detail">
+      <div><span>ID</span><span>${esc(f.id)}</span></div>
+      <div><span>路径</span><span>${esc(f.path || '/')}</span></div>
+      <div><span>大小</span><span>${esc(f.size_fmt || formatSize(f.file_size))}</span></div>
+      <div><span>类型</span><span>${esc(f.mime_type || 'application/octet-stream')}</span></div>
+      <div><span>SHA256</span><span>${esc(f.sha256 || '-')}</span></div>
+      <div><span>存储</span><span>${esc(f.is_multipart ? `multipart · ${f.chunk_count || 0} chunks` : 'single asset')}</span></div>
+      <div><span>创建时间</span><span>${esc(f.created_at || '')}</span></div>
+    </div>
+    <div class="modal-actions"><button onclick="downloadFile(${f.id})">下载</button><button onclick="copyDownload(${f.id})">复制链接</button><button class="secondary" onclick="closeModal()">关闭</button></div>`;
+  document.getElementById('detail-modal').classList.add('show');
+}
+function closeModal() { document.getElementById('detail-modal').classList.remove('show'); }
+function webdavAbsUrl() { return location.origin + '/dav/'; }
+function toggleWebDAV() {
+  const card = document.getElementById('webdav-card'); card.classList.toggle('show');
+  document.getElementById('webdav-url').textContent = webdavAbsUrl();
+}
+function openWebDAV() { window.open('/dav/', '_blank'); }
+async function copyWebDAVUrl() { await navigator.clipboard.writeText(webdavAbsUrl()); toast('WebDAV 地址已复制', 'success'); }
+
+setPath('/'); loadFiles();
 </script>
 </body>
 </html>
