@@ -13,7 +13,7 @@ from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
 from wsgidav.wsgidav_app import WsgiDAVApp
 
 from database import get_db, FileDB, DirDB, normalize_path
-from github_io import GitHubReleaseAssets, sha256_file
+from github_io import GitHubReleaseAssets
 
 
 def run_async(coro):
@@ -54,7 +54,7 @@ class GitDiskFile(DAVNonCollection):
         return f'{self.file_info["id"]}-{self.file_info["sha256"][:12]}'
 
     def support_ranges(self):
-        return True
+        return not bool(self.file_info.get("is_multipart"))
 
     def get_content(self):
         env = self.environ or {}
@@ -63,16 +63,39 @@ class GitDiskFile(DAVNonCollection):
         return io.BytesIO(data)
 
     async def _download_all(self, range_header=None) -> bytes:
-        chunks = []
-        async for chunk in GitHubReleaseAssets().stream_asset(self.file_info["asset_id"], range_header=range_header):
-            chunks.append(chunk)
-        return b"".join(chunks)
+        storage = GitHubReleaseAssets()
+        chunks_out = []
+        if self.file_info.get("is_multipart"):
+            db = await get_db()
+            try:
+                parts = await FileDB(db).list_chunks(self.file_info["id"])
+            finally:
+                await db.close()
+            for part in parts:
+                async for chunk in storage.stream_asset(part["asset_id"]):
+                    chunks_out.append(chunk)
+        else:
+            async for chunk in storage.stream_asset(self.file_info["asset_id"], range_header=range_header):
+                chunks_out.append(chunk)
+        return b"".join(chunks_out)
 
     def delete(self):
         async def do_delete():
             db = await get_db()
             try:
-                await FileDB(db).soft_delete(self.file_info["id"], deleted_by="webdav")
+                fdb = FileDB(db)
+                parts = await fdb.list_chunks(self.file_info["id"]) if self.file_info.get("is_multipart") else []
+            finally:
+                await db.close()
+            storage = GitHubReleaseAssets()
+            asset_ids = [int(p["asset_id"]) for p in parts]
+            if not self.file_info.get("is_multipart") and self.file_info.get("asset_id"):
+                asset_ids.append(int(self.file_info["asset_id"]))
+            for asset_id in asset_ids:
+                await storage.delete_asset(asset_id)
+            db = await get_db()
+            try:
+                await FileDB(db).delete_index(self.file_info["id"])
             finally:
                 await db.close()
         run_async(do_delete())
@@ -96,28 +119,19 @@ class UploadBuffer(io.BytesIO):
         name = base_name(self.dav_path)
         dest = parent_path(self.dav_path)
         mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        from app import _upload_one
+
+        class _Upload:
+            def __init__(self, file, filename, content_type):
+                self.file = file
+                self.filename = filename
+                self.content_type = content_type
+
         with tempfile.NamedTemporaryFile(delete=True) as tmp:
             tmp.write(data)
             tmp.flush()
-            meta = await GitHubReleaseAssets().upload_file(tmp.name, name, mime_type)
-        db = await get_db()
-        try:
-            ddb = DirDB(db)
-            if dest != "/" and not await ddb.dir_exists(dest):
-                # WebDAV clients often create parent collections first, but be forgiving for root only.
-                raise RuntimeError(f"目录不存在：{dest}")
-            await FileDB(db).add_file(
-                file_name=name,
-                file_size=meta["file_size"],
-                mime_type=meta["mime_type"],
-                path=dest,
-                sha256=meta["sha256"],
-                asset_id=meta["asset_id"],
-                asset_name=meta["asset_name"],
-                browser_download_url=meta["browser_download_url"],
-            )
-        finally:
-            await db.close()
+            tmp.seek(0)
+            await _upload_one(_Upload(tmp, name, mime_type), dest)
 
 
 class GitDiskCollection(DAVCollection):

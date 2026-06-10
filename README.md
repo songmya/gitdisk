@@ -10,12 +10,12 @@ GitDisk 是一个受 TGDrive 启发的轻量网盘服务：
 
 ## 功能
 
-- 📤 上传文件到 GitHub Release Assets
+- 📤 上传文件到 GitHub Release Assets，大文件自动分片
 - 📥 代理下载文件，不向浏览器暴露 GitHub Token
 - 📁 目录索引由 SQLite 管理
 - 🔍 文件列表和搜索
-- 🗑️ 删除进入回收站
-- ♻️ 恢复 / 彻底删除索引和 GitHub asset
+- 🗑️ WebUI/API 删除会同步删除 GitHub asset 和本地索引
+- ♻️ 保留回收站 API，用于后续软删除模式
 - 🌐 WebDAV：挂载在 `/dav`
 
 ## 快速开始
@@ -110,6 +110,8 @@ docker compose up -d --build
 | `PROXY` | 空 | 可选 GitHub 出站代理 |
 | `DB_PATH` | `data/gitdisk.sqlite3` | SQLite 路径 |
 | `MAX_FILE_SIZE_MB` | `0` | 单文件限制；0 表示不限 |
+| `GITHUB_CHUNK_SIZE_MB` | `1900` | GitHub Release Asset 分片大小，单位 MB |
+| `GITHUB_SINGLE_UPLOAD_THRESHOLD_MB` | `1900` | 超过该大小自动分片，单位 MB |
 | `UPLOAD_CACHE_DIR` | `data/cache` | 上传临时缓存目录 |
 | `WEB_AUTH_TOKEN` | 空 | 可选 API Bearer Token；为空则不启用鉴权 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
@@ -119,9 +121,9 @@ docker compose up -d --build
 - `GET /api/stats`
 - `GET /api/files?path=/&search=`
 - `POST /api/dirs?path=/books`
-- `POST /api/upload?path=/books` multipart form `file`
+- `POST /api/upload?path=/books` multipart form `files`（可多文件）
 - `GET /api/download/{file_id}`
-- `DELETE /api/files/{file_id}` 软删除
+- `DELETE /api/files/{file_id}` 同步删除 GitHub asset + 本地索引
 - `GET /api/trash`
 - `POST /api/trash/{file_id}/restore`
 - `DELETE /api/trash/{file_id}` 彻底删除 asset + 索引
@@ -129,6 +131,8 @@ docker compose up -d --build
 ## 注意事项
 
 - GitHub API 有 rate limit，不适合高频大量上传。
+- GitHub Release Asset 单文件限制约 2GiB；GitDisk 默认超过 1900MB 自动拆成多个 asset。
+- 分片文件下载会由服务端顺序拼接；当前暂不支持分片文件的 HTTP Range 下载。
 - Release Assets 不提供真正目录，目录由 SQLite 维护。
 - 如果 `.env` 中配置了 Token，不要提交 `.env`。
 - 私有仓库下载必须经本服务代理，避免 token 泄漏。

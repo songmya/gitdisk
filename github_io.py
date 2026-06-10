@@ -47,6 +47,10 @@ async def sha256_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 class GitHubReleaseAssets:
     def __init__(self) -> None:
         config.validate_storage_config()
@@ -97,28 +101,29 @@ class GitHubReleaseAssets:
         return await self._request("POST", create_url, json=payload)
 
     async def upload_file(self, local_path: str | Path, file_name: str, mime_type: str | None = None) -> dict:
+        path = Path(local_path)
+        return await self.upload_bytes_or_file(
+            data_source=path,
+            asset_name=unique_asset_name(file_name),
+            content_type=mime_type or guess_mime(file_name),
+            size=path.stat().st_size,
+            digest=await sha256_file(path),
+        )
+
+    async def upload_bytes_or_file(self, *, data_source, asset_name: str, content_type: str,
+                                   size: int, digest: str) -> dict:
         release = await self.ensure_release()
         upload_url = release["upload_url"].split("{")[0]
-        asset_name = unique_asset_name(file_name)
-        path = Path(local_path)
-        content_type = mime_type or guess_mime(file_name)
-        size = path.stat().st_size
-        digest = await sha256_file(path)
-
         url = f"{upload_url}?name={quote(asset_name)}"
         headers = dict(self.headers)
         headers["Content-Type"] = content_type
         headers["Content-Length"] = str(size)
         async with aiohttp.ClientSession(headers=headers) as session:
-            with open(path, "rb") as f:
-                async with session.post(url, data=f, proxy=config.PROXY or None) as resp:
-                    try:
-                        data = await resp.json()
-                    except Exception:
-                        data = {"text": await resp.text()}
-                    if resp.status >= 400:
-                        msg = data.get("message") or data.get("text") or f"HTTP {resp.status}"
-                        raise GitHubStorageError(f"上传 asset 失败: {resp.status} {msg}")
+            if isinstance(data_source, (str, Path)):
+                with open(data_source, "rb") as f:
+                    data = await self._post_asset(session, url, f)
+            else:
+                data = await self._post_asset(session, url, data_source)
         return {
             "asset_id": int(data["id"]),
             "asset_name": data.get("name", asset_name),
@@ -127,6 +132,17 @@ class GitHubReleaseAssets:
             "sha256": digest,
             "mime_type": content_type,
         }
+
+    async def _post_asset(self, session: aiohttp.ClientSession, url: str, data_source) -> dict:
+        async with session.post(url, data=data_source, proxy=config.PROXY or None) as resp:
+            try:
+                data = await resp.json()
+            except Exception:
+                data = {"text": await resp.text()}
+            if resp.status >= 400:
+                msg = data.get("message") or data.get("text") or f"HTTP {resp.status}"
+                raise GitHubStorageError(f"上传 asset 失败: {resp.status} {msg}")
+            return data
 
     async def delete_asset(self, asset_id: int) -> dict:
         url = f"{self.api}/repos/{self.owner}/{self.repo}/releases/assets/{asset_id}"

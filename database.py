@@ -38,7 +38,23 @@ async def init_db() -> None:
                 updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                 deleted INTEGER DEFAULT 0,
                 deleted_at TEXT DEFAULT '',
-                deleted_by TEXT DEFAULT ''
+                deleted_by TEXT DEFAULT '',
+                is_multipart INTEGER DEFAULT 0,
+                chunk_count INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS file_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id_int INTEGER NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                asset_id INTEGER NOT NULL,
+                asset_name TEXT NOT NULL,
+                chunk_size INTEGER NOT NULL,
+                chunk_sha256 TEXT DEFAULT '',
+                browser_download_url TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(file_id_int, chunk_index),
+                FOREIGN KEY (file_id_int) REFERENCES files(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS dirs (
@@ -52,10 +68,19 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
             CREATE INDEX IF NOT EXISTS idx_files_name ON files(file_name);
             CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(deleted);
+            CREATE INDEX IF NOT EXISTS idx_chunks_file ON file_chunks(file_id_int, chunk_index);
             CREATE INDEX IF NOT EXISTS idx_dirs_path ON dirs(path);
             CREATE INDEX IF NOT EXISTS idx_dirs_parent ON dirs(parent_path);
             """
         )
+        async def _ensure_column(table: str, col: str, ddl: str) -> None:
+            cursor = await db.execute(f"PRAGMA table_info({table})")
+            cols = [row[1] for row in await cursor.fetchall()]
+            if col not in cols:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+        await _ensure_column("files", "is_multipart", "is_multipart INTEGER DEFAULT 0")
+        await _ensure_column("files", "chunk_count", "chunk_count INTEGER DEFAULT 0")
         await db.commit()
     finally:
         await db.close()
@@ -74,13 +99,15 @@ class FileDB:
 
     async def add_file(self, *, file_name: str, file_size: int, mime_type: str, path: str,
                        sha256: str, asset_id: int, asset_name: str,
-                       browser_download_url: str = "", tags: str = "") -> int:
+                       browser_download_url: str = "", tags: str = "",
+                       is_multipart: int = 0, chunk_count: int = 0) -> int:
         await self.db.execute(
             """INSERT INTO files
-               (file_name, file_size, mime_type, path, tags, sha256, asset_id, asset_name, browser_download_url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (file_name, file_size, mime_type, path, tags, sha256, asset_id, asset_name,
+                browser_download_url, is_multipart, chunk_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (file_name, file_size, mime_type, normalize_path(path), tags, sha256,
-             asset_id, asset_name, browser_download_url),
+             asset_id, asset_name, browser_download_url, is_multipart, chunk_count),
         )
         await self.db.commit()
         cursor = await self.db.execute("SELECT last_insert_rowid()")
@@ -151,6 +178,23 @@ class FileDB:
         cursor = await self.db.execute("DELETE FROM files WHERE id=? AND deleted=1", (file_id,))
         await self.db.commit()
         return cursor.rowcount > 0
+
+    async def add_chunk(self, *, file_id_int: int, chunk_index: int, asset_id: int,
+                        asset_name: str, chunk_size: int, chunk_sha256: str,
+                        browser_download_url: str = "") -> None:
+        await self.db.execute(
+            """INSERT INTO file_chunks
+               (file_id_int, chunk_index, asset_id, asset_name, chunk_size, chunk_sha256, browser_download_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (file_id_int, chunk_index, asset_id, asset_name, chunk_size, chunk_sha256, browser_download_url),
+        )
+        await self.db.commit()
+
+    async def list_chunks(self, file_id_int: int) -> list[dict]:
+        cursor = await self.db.execute(
+            "SELECT * FROM file_chunks WHERE file_id_int=? ORDER BY chunk_index", (file_id_int,)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
 
     async def delete_index(self, file_id: int) -> bool:
         """Delete a file index regardless of trash state after remote asset removal."""

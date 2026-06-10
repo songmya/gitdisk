@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -16,7 +18,7 @@ from starlette.middleware.wsgi import WSGIMiddleware
 
 import config
 from database import init_db, get_db, FileDB, DirDB, normalize_path
-from github_io import GitHubReleaseAssets, GitHubStorageError
+from github_io import GitHubReleaseAssets, GitHubStorageError, sha256_file, sha256_bytes, safe_asset_name
 
 logging.basicConfig(level=getattr(logging, config.LOG_LEVEL, logging.INFO))
 logger = logging.getLogger("gitdisk")
@@ -117,24 +119,114 @@ async def _upload_one(file: UploadFile, dest_path: str) -> dict:
             raise HTTPException(413, f"文件超过 MAX_FILE_SIZE_MB={config.MAX_FILE_SIZE_MB}MB：{filename}")
 
         storage = GitHubReleaseAssets()
-        meta = await storage.upload_file(tmp_path, filename, mime_type)
+        threshold = max(1, config.GITHUB_SINGLE_UPLOAD_THRESHOLD_MB) * 1024 * 1024
+        chunk_size = max(1, config.GITHUB_CHUNK_SIZE_MB) * 1024 * 1024
 
+        if size <= threshold:
+            meta = await storage.upload_file(tmp_path, filename, mime_type)
+            db = await get_db()
+            try:
+                fdb = FileDB(db)
+                file_id = await fdb.add_file(
+                    file_name=filename,
+                    file_size=meta["file_size"],
+                    mime_type=meta["mime_type"],
+                    path=dest_path,
+                    sha256=meta["sha256"],
+                    asset_id=meta["asset_id"],
+                    asset_name=meta["asset_name"],
+                    browser_download_url=meta["browser_download_url"],
+                )
+            finally:
+                await db.close()
+            return {"ok": True, "mode": "single", "file_id": file_id, "file_name": filename, "path": dest_path, **meta}
+
+        total_sha = await sha256_file(tmp_path)
+        chunk_count = (size + chunk_size - 1) // chunk_size
         db = await get_db()
         try:
             fdb = FileDB(db)
             file_id = await fdb.add_file(
                 file_name=filename,
-                file_size=meta["file_size"],
-                mime_type=meta["mime_type"],
+                file_size=size,
+                mime_type=mime_type,
                 path=dest_path,
-                sha256=meta["sha256"],
-                asset_id=meta["asset_id"],
-                asset_name=meta["asset_name"],
-                browser_download_url=meta["browser_download_url"],
+                sha256=total_sha,
+                asset_id=0,
+                asset_name="",
+                browser_download_url="",
+                is_multipart=1,
+                chunk_count=chunk_count,
             )
         finally:
             await db.close()
-        return {"ok": True, "file_id": file_id, "file_name": filename, "path": dest_path, **meta}
+
+        uploaded_assets: list[int] = []
+        base = safe_asset_name(filename)
+        buffer_size = 8 * 1024 * 1024
+        try:
+            with tmp_path.open("rb") as f:
+                for idx in range(chunk_count):
+                    part_name = f"{file_id}-{base}.part{idx:05d}-of-{chunk_count:05d}"
+                    remaining = min(chunk_size, size - idx * chunk_size)
+                    h = hashlib.sha256()
+                    written = 0
+                    with tempfile.NamedTemporaryFile(dir=config.UPLOAD_CACHE_DIR, delete=True) as part:
+                        while remaining > 0:
+                            data = f.read(min(buffer_size, remaining))
+                            if not data:
+                                break
+                            part.write(data)
+                            h.update(data)
+                            written += len(data)
+                            remaining -= len(data)
+                        part.flush()
+                        meta = await storage.upload_bytes_or_file(
+                            data_source=part.name,
+                            asset_name=part_name,
+                            content_type="application/octet-stream",
+                            size=written,
+                            digest=h.hexdigest(),
+                        )
+                    uploaded_assets.append(meta["asset_id"])
+                    db = await get_db()
+                    try:
+                        await FileDB(db).add_chunk(
+                            file_id_int=file_id,
+                            chunk_index=idx,
+                            asset_id=meta["asset_id"],
+                            asset_name=meta["asset_name"],
+                            chunk_size=meta["file_size"],
+                            chunk_sha256=meta["sha256"],
+                            browser_download_url=meta["browser_download_url"],
+                        )
+                    finally:
+                        await db.close()
+        except Exception:
+            for asset_id in uploaded_assets:
+                try:
+                    await storage.delete_asset(asset_id)
+                except Exception:
+                    pass
+            db = await get_db()
+            try:
+                await FileDB(db).delete_index(file_id)
+            finally:
+                await db.close()
+            raise
+
+        return {
+            "ok": True,
+            "mode": "multipart",
+            "file_id": file_id,
+            "file_name": filename,
+            "path": dest_path,
+            "file_size": size,
+            "sha256": total_sha,
+            "chunk_count": chunk_count,
+            "chunk_size": chunk_size,
+            "mime_type": mime_type,
+        }
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -177,15 +269,31 @@ async def api_download(file_id: int, request: Request):
     range_header = request.headers.get("range")
     storage = GitHubReleaseAssets()
 
+    if f.get("is_multipart") and range_header:
+        # First multipart implementation streams whole files. Range support across
+        # chunks can be added later with chunk offset mapping.
+        raise HTTPException(416, "分片文件暂不支持 Range 下载，请完整下载")
+
     async def body():
-        async for chunk in storage.stream_asset(f["asset_id"], range_header=range_header):
-            yield chunk
+        if f.get("is_multipart"):
+            db2 = await get_db()
+            try:
+                chunks = await FileDB(db2).list_chunks(file_id)
+            finally:
+                await db2.close()
+            for c in chunks:
+                async for chunk in storage.stream_asset(c["asset_id"]):
+                    yield chunk
+        else:
+            async for chunk in storage.stream_asset(f["asset_id"], range_header=range_header):
+                yield chunk
 
     headers = {
         "Content-Disposition": f'attachment; filename="{f["file_name"]}"',
-        "Accept-Ranges": "bytes",
     }
-    status_code = 206 if range_header else 200
+    if not f.get("is_multipart"):
+        headers["Accept-Ranges"] = "bytes"
+    status_code = 206 if range_header and not f.get("is_multipart") else 200
     return StreamingResponse(body(), media_type=f["mime_type"] or "application/octet-stream", headers=headers, status_code=status_code)
 
 
@@ -201,11 +309,22 @@ async def api_delete(file_id: int):
     finally:
         await db.close()
 
-    errors = []
+    db = await get_db()
     try:
-        await GitHubReleaseAssets().delete_asset(int(f["asset_id"]))
-    except Exception as e:
-        errors.append(str(e))
+        chunks = await FileDB(db).list_chunks(file_id) if f.get("is_multipart") else []
+    finally:
+        await db.close()
+
+    errors = []
+    storage = GitHubReleaseAssets()
+    asset_ids = [int(c["asset_id"]) for c in chunks]
+    if not f.get("is_multipart") and f.get("asset_id"):
+        asset_ids.append(int(f["asset_id"]))
+    for asset_id in asset_ids:
+        try:
+            await storage.delete_asset(asset_id)
+        except Exception as e:
+            errors.append(f"asset {asset_id}: {e}")
 
     if errors:
         raise HTTPException(502, "GitHub asset 删除失败：" + "; ".join(errors))
@@ -255,11 +374,22 @@ async def api_purge(file_id: int):
     finally:
         await db.close()
 
-    errors = []
+    db = await get_db()
     try:
-        await GitHubReleaseAssets().delete_asset(int(f["asset_id"]))
-    except Exception as e:
-        errors.append(str(e))
+        chunks = await FileDB(db).list_chunks(file_id) if f.get("is_multipart") else []
+    finally:
+        await db.close()
+
+    errors = []
+    storage = GitHubReleaseAssets()
+    asset_ids = [int(c["asset_id"]) for c in chunks]
+    if not f.get("is_multipart") and f.get("asset_id"):
+        asset_ids.append(int(f["asset_id"]))
+    for asset_id in asset_ids:
+        try:
+            await storage.delete_asset(asset_id)
+        except Exception as e:
+            errors.append(f"asset {asset_id}: {e}")
 
     db = await get_db()
     try:

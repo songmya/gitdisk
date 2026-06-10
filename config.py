@@ -14,6 +14,9 @@ GITHUB_RELEASE_TAG = os.getenv("GITHUB_RELEASE_TAG", "gitdisk").strip() or "gitd
 
 DB_PATH = os.getenv("DB_PATH", "data/gitdisk.sqlite3")
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "0"))
+# GitHub Release Asset per-file limit is about 2GiB. Keep the default below that.
+GITHUB_CHUNK_SIZE_MB = int(os.getenv("GITHUB_CHUNK_SIZE_MB", "1900"))
+GITHUB_SINGLE_UPLOAD_THRESHOLD_MB = int(os.getenv("GITHUB_SINGLE_UPLOAD_THRESHOLD_MB", str(GITHUB_CHUNK_SIZE_MB)))
 UPLOAD_CACHE_DIR = os.getenv("UPLOAD_CACHE_DIR", "data/cache")
 WEB_AUTH_TOKEN = os.getenv("WEB_AUTH_TOKEN", "").strip()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
