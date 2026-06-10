@@ -93,6 +93,43 @@ WebDAV：
 http://127.0.0.1:8090/dav
 ```
 
+### WebDAV 使用
+
+WebDAV 挂载地址：
+
+```text
+http://<服务器IP>:8090/dav
+```
+
+示例：
+
+```bash
+# 查看根目录
+curl -X PROPFIND http://127.0.0.1:8090/dav/ -H 'Depth: 1'
+
+# 创建目录
+curl -X MKCOL http://127.0.0.1:8090/dav/books
+
+# 上传文件
+curl -T ./example.pdf http://127.0.0.1:8090/dav/books/example.pdf
+
+# 下载文件
+curl -o example.pdf http://127.0.0.1:8090/dav/books/example.pdf
+
+# 删除文件：会同步删除 GitHub Release Asset 和本地索引
+curl -X DELETE http://127.0.0.1:8090/dav/books/example.pdf
+```
+
+也可以在支持 WebDAV 的客户端里挂载该地址，例如 macOS Finder、Windows 网络位置、RaiDrive、Mountain Duck、rclone 等。
+
+当前 WebDAV 侧和 WebUI/API 一样支持：
+
+- 大文件分片上传
+- 分片文件顺序拼接下载
+- 删除时同步删除所有 GitHub assets 和本地索引
+
+注意：分片文件暂不支持 Range/seek 下载；普通单 asset 文件支持 Range。
+
 ### 4. Docker
 
 ```bash

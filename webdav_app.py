@@ -8,12 +8,12 @@ import mimetypes
 import tempfile
 from pathlib import PurePosixPath
 
-import aiosqlite
 from wsgidav.dav_provider import DAVProvider, DAVCollection, DAVNonCollection
 from wsgidav.wsgidav_app import WsgiDAVApp
 
 from database import get_db, FileDB, DirDB, normalize_path
 from github_io import GitHubReleaseAssets
+from storage_service import store_local_file, delete_file_and_assets, iter_file_bytes
 
 
 def run_async(coro):
@@ -36,6 +36,67 @@ def base_name(path: str) -> str:
     return PurePosixPath(normalize_path(path)).name
 
 
+class _AsyncIteratorReader(io.RawIOBase):
+    """Expose an async byte iterator as a sync readable file object for WsgiDAV."""
+
+    def __init__(self, async_iter):
+        super().__init__()
+        self._loop = asyncio.new_event_loop()
+        self._aiter = async_iter.__aiter__()
+        self._buf = b""
+        self._done = False
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return False
+
+    def tell(self):
+        return 0
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        if offset == 0 and whence == io.SEEK_SET:
+            return 0
+        raise OSError("seek not supported")
+
+    def _fill(self, want: int) -> None:
+        while not self._done and (want < 0 or len(self._buf) < want):
+            try:
+                chunk = self._loop.run_until_complete(self._aiter.__anext__())
+                if chunk:
+                    self._buf += chunk
+            except StopAsyncIteration:
+                self._done = True
+                break
+
+    def read(self, n=-1):
+        if n is None:
+            n = -1
+        self._fill(n)
+        if n < 0:
+            out, self._buf = self._buf, b""
+        else:
+            out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+    def readinto(self, b):
+        data = self.read(len(b))
+        b[:len(data)] = data
+        return len(data)
+
+    def close(self):
+        try:
+            self._loop.run_until_complete(self._aiter.aclose())
+        except Exception:
+            pass
+        try:
+            self._loop.close()
+        except Exception:
+            pass
+        super().close()
+
+
 class GitDiskFile(DAVNonCollection):
     def __init__(self, path, environ, file_info):
         super().__init__(path, environ)
@@ -54,84 +115,59 @@ class GitDiskFile(DAVNonCollection):
         return f'{self.file_info["id"]}-{self.file_info["sha256"][:12]}'
 
     def support_ranges(self):
-        return not bool(self.file_info.get("is_multipart"))
+        # WsgiDAV may call seek() for ranged responses. GitDisk WebDAV serves a
+        # forward-only stream so it works for large multipart files without
+        # buffering. API downloads still support Range for single-asset files.
+        return False
 
     def get_content(self):
-        env = self.environ or {}
-        range_header = env.get("HTTP_RANGE") or env.get("http_range")
-        data = run_async(self._download_all(range_header))
-        return io.BytesIO(data)
+        return _AsyncIteratorReader(iter_file_bytes(self.file_info["id"], range_header=None))
 
-    async def _download_all(self, range_header=None) -> bytes:
-        storage = GitHubReleaseAssets()
-        chunks_out = []
-        if self.file_info.get("is_multipart"):
-            db = await get_db()
-            try:
-                parts = await FileDB(db).list_chunks(self.file_info["id"])
-            finally:
-                await db.close()
-            for part in parts:
-                async for chunk in storage.stream_asset(part["asset_id"]):
-                    chunks_out.append(chunk)
-        else:
-            async for chunk in storage.stream_asset(self.file_info["asset_id"], range_header=range_header):
-                chunks_out.append(chunk)
-        return b"".join(chunks_out)
+    def begin_write(self, content_type=None):
+        return UploadSink(self.path, content_type=content_type)
+
+    def end_write(self, with_errors: bool):
+        pass
 
     def delete(self):
-        async def do_delete():
-            db = await get_db()
-            try:
-                fdb = FileDB(db)
-                parts = await fdb.list_chunks(self.file_info["id"]) if self.file_info.get("is_multipart") else []
-            finally:
-                await db.close()
-            storage = GitHubReleaseAssets()
-            asset_ids = [int(p["asset_id"]) for p in parts]
-            if not self.file_info.get("is_multipart") and self.file_info.get("asset_id"):
-                asset_ids.append(int(self.file_info["asset_id"]))
-            for asset_id in asset_ids:
-                await storage.delete_asset(asset_id)
-            db = await get_db()
-            try:
-                await FileDB(db).delete_index(self.file_info["id"])
-            finally:
-                await db.close()
-        run_async(do_delete())
+        ok, errors = run_async(delete_file_and_assets(self.file_info["id"]))
+        if errors:
+            raise RuntimeError("; ".join(errors))
+        if not ok:
+            raise RuntimeError("删除失败")
 
 
-class UploadBuffer(io.BytesIO):
-    def __init__(self, dav_path: str):
+class UploadSink(io.RawIOBase):
+    """File-like sink returned by DAV resource begin_write()."""
+
+    def __init__(self, dav_path: str, content_type: str | None = None):
         super().__init__()
         self.dav_path = normalize_path(dav_path)
-        self.closed_once = False
+        self.content_type = content_type
+        self._tmp = tempfile.NamedTemporaryFile(delete=True)
+        self._uploaded = False
+
+    def writable(self):
+        return True
+
+    def write(self, data: bytes):
+        return self._tmp.write(data)
 
     def close(self):
-        if self.closed_once:
+        if self._uploaded:
             return super().close()
-        self.closed_once = True
-        data = self.getvalue()
-        run_async(self._upload(data))
-        return super().close()
-
-    async def _upload(self, data: bytes):
-        name = base_name(self.dav_path)
-        dest = parent_path(self.dav_path)
-        mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        from app import _upload_one
-
-        class _Upload:
-            def __init__(self, file, filename, content_type):
-                self.file = file
-                self.filename = filename
-                self.content_type = content_type
-
-        with tempfile.NamedTemporaryFile(delete=True) as tmp:
-            tmp.write(data)
-            tmp.flush()
-            tmp.seek(0)
-            await _upload_one(_Upload(tmp, name, mime_type), dest)
+        self._uploaded = True
+        try:
+            self._tmp.flush()
+            name = base_name(self.dav_path)
+            dest = parent_path(self.dav_path)
+            mime_type = self.content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+            run_async(store_local_file(local_path=self._tmp.name, file_name=name, mime_type=mime_type, dest_path=dest))
+        finally:
+            try:
+                self._tmp.close()
+            finally:
+                super().close()
 
 
 class GitDiskCollection(DAVCollection):
@@ -189,7 +225,15 @@ class GitDiskCollection(DAVCollection):
 
     def create_empty_resource(self, name):
         path = normalize_path(f"{self.path.rstrip('/')}/{name}")
-        return UploadBuffer(path)
+        return GitDiskFile(path, self.environ, {
+            "id": 0,
+            "file_name": name,
+            "file_size": 0,
+            "mime_type": mimetypes.guess_type(name)[0] or "application/octet-stream",
+            "sha256": "",
+            "is_multipart": 0,
+            "asset_id": 0,
+        })
 
 
 class GitDiskProvider(DAVProvider):
