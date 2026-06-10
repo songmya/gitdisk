@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GitDisk</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; color: #1f2937; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    h1 { margin: 0 0 8px; }
+    .muted { color: #6b7280; }
+    .bar { display:flex; gap:8px; flex-wrap:wrap; margin: 20px 0; }
+    input, button { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; }
+    button { background:#111827; color:white; cursor:pointer; }
+    button.secondary { background:#f3f4f6; color:#111827; }
+    table { width:100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align:left; }
+    tr:hover { background:#f9fafb; }
+    .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .danger { background:#dc2626; }
+    #msg { margin-top:12px; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>GitDisk</h1>
+      <div class="muted">GitHub Release Assets backed drive</div>
+    </div>
+    <div id="stats" class="muted"></div>
+  </header>
+
+  <div class="bar">
+    <input id="token" placeholder="Bearer Token（可选）" type="password" />
+    <input id="path" value="/" class="path" />
+    <button onclick="loadFiles()">刷新</button>
+    <input id="search" placeholder="搜索" />
+    <button onclick="loadFiles()">搜索</button>
+  </div>
+
+  <div class="bar">
+    <input id="dirName" placeholder="新目录路径，如 /books" />
+    <button class="secondary" onclick="createDir()">创建目录</button>
+    <input id="file" type="file" />
+    <button onclick="uploadFile()">上传</button>
+  </div>
+
+  <div id="msg" class="muted"></div>
+
+  <table>
+    <thead><tr><th>类型</th><th>名称</th><th>大小</th><th>时间</th><th>操作</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+let currentPath = '/';
+function authHeaders() {
+  const t = document.getElementById('token').value.trim();
+  return t ? {Authorization: 'Bearer ' + t} : {};
+}
+function joinPath(base, name) {
+  if (base === '/') return '/' + name;
+  return base.replace(/\/$/, '') + '/' + name;
+}
+function msg(text) { document.getElementById('msg').textContent = text || ''; }
+async function loadStats() {
+  const r = await fetch('/api/stats');
+  const s = await r.json();
+  document.getElementById('stats').textContent = `${s.file_count} 文件 · ${s.total_size_fmt} · ${s.dir_count} 目录`;
+}
+async function loadFiles() {
+  currentPath = document.getElementById('path').value || '/';
+  const search = document.getElementById('search').value || '';
+  const r = await fetch(`/api/files?path=${encodeURIComponent(currentPath)}&search=${encodeURIComponent(search)}`);
+  const data = await r.json();
+  const rows = document.getElementById('rows');
+  rows.innerHTML = '';
+  if (currentPath !== '/' && !search) {
+    const up = currentPath.split('/').slice(0,-1).join('/') || '/';
+    rows.innerHTML += `<tr><td>⬆️</td><td><a href="#" onclick="go('${up}')">..</a></td><td></td><td></td><td></td></tr>`;
+  }
+  for (const d of data.dirs || []) {
+    rows.innerHTML += `<tr><td>📁</td><td><a href="#" onclick="go('${d.path}')">${escapeHtml(d.name)}</a></td><td></td><td>${d.created_at || ''}</td><td></td></tr>`;
+  }
+  for (const f of data.files || []) {
+    rows.innerHTML += `<tr><td>📄</td><td>${escapeHtml(f.file_name)}</td><td>${f.size_fmt}</td><td>${f.created_at}</td><td><button class="secondary" onclick="downloadFile(${f.id})">下载</button> <button class="danger" onclick="deleteFile(${f.id})">删除</button></td></tr>`;
+  }
+  await loadStats();
+}
+function go(p) { document.getElementById('path').value = p; document.getElementById('search').value=''; loadFiles(); }
+async function createDir() {
+  const p = document.getElementById('dirName').value.trim();
+  if (!p) return;
+  const r = await fetch('/api/dirs?path=' + encodeURIComponent(p), {method:'POST', headers: authHeaders()});
+  const text = await r.text();
+  msg(r.ok ? '目录已创建' : text);
+  await loadFiles();
+}
+async function uploadFile() {
+  const input = document.getElementById('file');
+  if (!input.files[0]) return;
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  msg('上传中...');
+  const r = await fetch('/api/upload?path=' + encodeURIComponent(currentPath), {method:'POST', headers: authHeaders(), body: fd});
+  const text = await r.text();
+  msg(r.ok ? '上传完成' : text);
+  input.value = '';
+  await loadFiles();
+}
+function downloadFile(id) { window.open('/api/download/' + id, '_blank'); }
+async function deleteFile(id) {
+  if (!confirm('删除到回收站？')) return;
+  const r = await fetch('/api/files/' + id, {method:'DELETE', headers: authHeaders()});
+  msg(r.ok ? '已移入回收站' : await r.text());
+  await loadFiles();
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
+loadFiles();
+</script>
+</body>
+</html>
