@@ -7,3 +7,5 @@ data/*.sqlite3
 data/*.sqlite3-*
 data/cache/
 .DS_Store
+
+data/*.log

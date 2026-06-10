@@ -62,6 +62,7 @@ class GitHubReleaseAssets:
         }
 
     async def _request(self, method: str, url: str, **kwargs) -> dict:
+        kwargs.setdefault("proxy", config.PROXY or None)
         async with aiohttp.ClientSession(headers=self.headers) as session:
             async with session.request(method, url, **kwargs) as resp:
                 if resp.status == 204:
@@ -78,7 +79,7 @@ class GitHubReleaseAssets:
     async def ensure_release(self) -> dict:
         release_url = f"{self.api}/repos/{self.owner}/{self.repo}/releases/tags/{quote(self.tag)}"
         async with aiohttp.ClientSession(headers=self.headers) as session:
-            async with session.get(release_url) as resp:
+            async with session.get(release_url, proxy=config.PROXY or None) as resp:
                 if resp.status == 200:
                     return await resp.json()
                 if resp.status != 404:
@@ -110,7 +111,7 @@ class GitHubReleaseAssets:
         headers["Content-Length"] = str(size)
         async with aiohttp.ClientSession(headers=headers) as session:
             with open(path, "rb") as f:
-                async with session.post(url, data=f) as resp:
+                async with session.post(url, data=f, proxy=config.PROXY or None) as resp:
                     try:
                         data = await resp.json()
                     except Exception:
@@ -142,7 +143,7 @@ class GitHubReleaseAssets:
         if range_header:
             headers["Range"] = range_header
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=config.PROXY or None) as resp:
                 if resp.status not in (200, 206):
                     text = await resp.text()
                     raise GitHubStorageError(f"下载 asset 失败: {resp.status} {text[:200]}")

@@ -18,6 +18,18 @@ UPLOAD_CACHE_DIR = os.getenv("UPLOAD_CACHE_DIR", "data/cache")
 WEB_AUTH_TOKEN = os.getenv("WEB_AUTH_TOKEN", "").strip()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
+# Optional outbound proxy for GitHub API/upload/download requests.
+# Supports http://, https://, and socks proxies if aiohttp has the required extras.
+PROXY = (
+    os.getenv("PROXY", "").strip()
+    or os.getenv("HTTPS_PROXY", "").strip()
+    or os.getenv("HTTP_PROXY", "").strip()
+    or os.getenv("ALL_PROXY", "").strip()
+    or os.getenv("https_proxy", "").strip()
+    or os.getenv("http_proxy", "").strip()
+    or os.getenv("all_proxy", "").strip()
+)
+
 GITHUB_API_BASE = os.getenv("GITHUB_API_BASE", "https://api.github.com").rstrip("/")
 
 

@@ -37,6 +37,38 @@ GITHUB_RELEASE_TAG=gitdisk
 
 Token 建议只授予目标私有仓库需要的最小权限。
 
+### 私有仓库支持与 Token 权限
+
+支持私有仓库。GitDisk 的上传、下载、删除都由服务端通过 `GITHUB_TOKEN` 调 GitHub API 完成，浏览器和 WebDAV 客户端不会直接接触 GitHub Token。
+
+推荐使用 Fine-grained personal access token，并只授权目标仓库：
+
+- Repository access：只选择用于存储的那个仓库
+- Contents：Read and write
+- Metadata：Read（GitHub 默认需要）
+
+如果使用 classic PAT：
+
+- 私有仓库：通常需要 `repo`
+- 公共仓库：可用 `public_repo`，但如果要写 Release assets，仍建议用 fine-grained token 精准授权
+
+GitDisk 需要这些能力：
+
+- 读取/创建指定 tag 的 Release
+- 上传 Release Asset
+- 下载私有仓库 Release Asset
+- 删除 Release Asset（彻底删除回收站文件时）
+
+### 代理配置
+
+如果机器访问 GitHub 不稳定，可以在 `.env` 中配置：
+
+```env
+PROXY=http://user:pass@host:port
+```
+
+也会读取常见环境变量：`HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 及小写形式。
+
 ### 2. 安装依赖
 
 ```bash
@@ -75,6 +107,7 @@ docker compose up -d --build
 | `GITHUB_OWNER` | 必填 | 仓库 owner |
 | `GITHUB_REPO` | 必填 | 仓库名 |
 | `GITHUB_RELEASE_TAG` | `gitdisk` | 存储用 Release tag |
+| `PROXY` | 空 | 可选 GitHub 出站代理 |
 | `DB_PATH` | `data/gitdisk.sqlite3` | SQLite 路径 |
 | `MAX_FILE_SIZE_MB` | `0` | 单文件限制；0 表示不限 |
 | `UPLOAD_CACHE_DIR` | `data/cache` | 上传临时缓存目录 |
