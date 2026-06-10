@@ -253,3 +253,18 @@ class DirDB:
             "SELECT * FROM dirs WHERE parent_path=? ORDER BY name", (normalize_path(parent_path),)
         )
         return [dict(r) for r in await cursor.fetchall()]
+
+    async def delete_dir(self, path: str) -> bool:
+        """Delete an empty directory."""
+        path = normalize_path(path)
+        if path == "/":
+            return False
+        cursor = await self.db.execute("SELECT COUNT(*) FROM dirs WHERE parent_path=?", (path,))
+        if int((await cursor.fetchone())[0]) > 0:
+            raise RuntimeError("目录非空，不能删除")
+        cursor = await self.db.execute("SELECT COUNT(*) FROM files WHERE path=? AND deleted=0", (path,))
+        if int((await cursor.fetchone())[0]) > 0:
+            raise RuntimeError("目录非空，不能删除")
+        cursor = await self.db.execute("DELETE FROM dirs WHERE path=?", (path,))
+        await self.db.commit()
+        return cursor.rowcount > 0

@@ -36,6 +36,17 @@ def base_name(path: str) -> str:
     return PurePosixPath(normalize_path(path)).name
 
 
+def _looks_like_dir_path(path: str) -> bool:
+    """Heuristic for WebDAV clients that PROPFIND a folder before MKCOL.
+
+    Avoid auto-creating obvious file paths like /movie.mp4 or /a/b.txt.
+    Folder names with dots are still possible, but users can create those through
+    clients that send MKCOL directly or the WebUI/API.
+    """
+    name = base_name(path)
+    return bool(name) and "." not in name
+
+
 class _AsyncIteratorReader(io.RawIOBase):
     """Expose an async byte iterator as a sync readable file object for WsgiDAV."""
 
@@ -174,6 +185,17 @@ class GitDiskCollection(DAVCollection):
     def __init__(self, path, environ):
         super().__init__(path, environ)
 
+    def delete(self):
+        async def do_delete():
+            db = await get_db()
+            try:
+                ok = await DirDB(db).delete_dir(normalize_path(self.path))
+                if not ok:
+                    raise RuntimeError("目录不存在或不能删除")
+            finally:
+                await db.close()
+        run_async(do_delete())
+
     def get_member_names(self):
         return run_async(self._member_names())
 
@@ -246,7 +268,28 @@ class GitDiskProvider(DAVProvider):
             return GitDiskCollection(path, environ)
         if info["kind"] == "file":
             return GitDiskFile(path, environ, info["file"])
+
+        # Compatibility: some WebDAV clients check whether a directory exists by
+        # issuing PROPFIND on the target path and treat a standards-compliant 404
+        # as a hard failure before sending MKCOL. If the missing path looks like a
+        # directory target, create it lazily on PROPFIND so "New Folder" works.
+        method = (environ or {}).get("REQUEST_METHOD", "").upper()
+        if method == "PROPFIND" and _looks_like_dir_path(path):
+            created = run_async(self._create_dir_if_parent_exists(path))
+            if created:
+                return GitDiskCollection(path, environ)
         return None
+
+    async def _create_dir_if_parent_exists(self, path: str) -> bool:
+        db = await get_db()
+        try:
+            ddb = DirDB(db)
+            parent = parent_path(path)
+            if parent != "/" and not await ddb.dir_exists(parent):
+                return False
+            return bool(await ddb.create_dir(path))
+        finally:
+            await db.close()
 
     async def _lookup(self, path):
         db = await get_db()
