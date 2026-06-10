@@ -41,8 +41,8 @@
   <div class="bar">
     <input id="dirName" placeholder="新目录路径，如 /books" />
     <button class="secondary" onclick="createDir()">创建目录</button>
-    <input id="file" type="file" />
-    <button onclick="uploadFile()">上传</button>
+    <input id="file" type="file" multiple />
+    <button onclick="uploadFile()">上传选中文件</button>
   </div>
 
   <div id="msg" class="muted"></div>
@@ -88,31 +88,54 @@ async function loadFiles() {
   await loadStats();
 }
 function go(p) { document.getElementById('path').value = p; document.getElementById('search').value=''; loadFiles(); }
+function humanError(text) {
+  try {
+    const data = JSON.parse(text);
+    return data.detail || data.message || text;
+  } catch (_) {
+    return text;
+  }
+}
 async function createDir() {
   const p = document.getElementById('dirName').value.trim();
-  if (!p) return;
+  if (!p) {
+    msg('请输入目录路径，例如：/books');
+    return;
+  }
   const r = await fetch('/api/dirs?path=' + encodeURIComponent(p), {method:'POST', headers: authHeaders()});
   const text = await r.text();
-  msg(r.ok ? '目录已创建' : text);
+  msg(r.ok ? `目录已创建：${p}` : `创建目录失败：${humanError(text)}`);
+  if (r.ok) document.getElementById('dirName').value = '';
   await loadFiles();
 }
 async function uploadFile() {
   const input = document.getElementById('file');
-  if (!input.files[0]) return;
+  const selected = Array.from(input.files || []);
+  if (!selected.length) {
+    msg('请先选择一个或多个文件');
+    return;
+  }
   const fd = new FormData();
-  fd.append('file', input.files[0]);
-  msg('上传中...');
+  for (const f of selected) fd.append('files', f);
+  msg(`正在上传 ${selected.length} 个文件...`);
   const r = await fetch('/api/upload?path=' + encodeURIComponent(currentPath), {method:'POST', headers: authHeaders(), body: fd});
   const text = await r.text();
-  msg(r.ok ? '上传完成' : text);
+  if (r.ok) {
+    const data = JSON.parse(text);
+    msg(`上传完成：${data.count} 个文件`);
+  } else {
+    msg(`上传失败：${humanError(text)}`);
+  }
   input.value = '';
   await loadFiles();
 }
 function downloadFile(id) { window.open('/api/download/' + id, '_blank'); }
 async function deleteFile(id) {
-  if (!confirm('删除到回收站？')) return;
+  if (!confirm('确定删除？这会同时删除 GitHub Release Asset 和本地索引，不能从回收站恢复。')) return;
+  msg('正在删除 GitHub 文件...');
   const r = await fetch('/api/files/' + id, {method:'DELETE', headers: authHeaders()});
-  msg(r.ok ? '已移入回收站' : await r.text());
+  const text = await r.text();
+  msg(r.ok ? '已从 GitHub 和本地索引删除' : `删除失败：${humanError(text)}`);
   await loadFiles();
 }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }

@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException, Request, Depends
+from typing import Annotated
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.wsgi import WSGIMiddleware
@@ -103,20 +104,9 @@ async def api_create_dir(path: str = Query(...)):
         await db.close()
 
 
-@app.post("/api/upload", dependencies=[Depends(require_auth)])
-async def api_upload(file: UploadFile = File(...), path: str = Query("/")):
+async def _upload_one(file: UploadFile, dest_path: str) -> dict:
     filename = file.filename or "upload.bin"
     mime_type = file.content_type or "application/octet-stream"
-    dest_path = normalize_path(path)
-
-    db = await get_db()
-    try:
-        ddb = DirDB(db)
-        if dest_path != "/" and not await ddb.dir_exists(dest_path):
-            raise HTTPException(400, f"目录不存在：{dest_path}")
-    finally:
-        await db.close()
-
     suffix = Path(filename).suffix
     tmp_path = Path(config.UPLOAD_CACHE_DIR) / f"{uuid.uuid4().hex}{suffix}.upload"
     try:
@@ -124,7 +114,7 @@ async def api_upload(file: UploadFile = File(...), path: str = Query("/")):
             shutil.copyfileobj(file.file, out)
         size = tmp_path.stat().st_size
         if config.MAX_FILE_SIZE_MB > 0 and size > config.MAX_FILE_SIZE_MB * 1024 * 1024:
-            raise HTTPException(413, f"文件超过 MAX_FILE_SIZE_MB={config.MAX_FILE_SIZE_MB}MB")
+            raise HTTPException(413, f"文件超过 MAX_FILE_SIZE_MB={config.MAX_FILE_SIZE_MB}MB：{filename}")
 
         storage = GitHubReleaseAssets()
         meta = await storage.upload_file(tmp_path, filename, mime_type)
@@ -145,13 +135,32 @@ async def api_upload(file: UploadFile = File(...), path: str = Query("/")):
         finally:
             await db.close()
         return {"ok": True, "file_id": file_id, "file_name": filename, "path": dest_path, **meta}
-    except GitHubStorageError as e:
-        raise HTTPException(502, str(e))
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+@app.post("/api/upload", dependencies=[Depends(require_auth)])
+async def api_upload(files: Annotated[list[UploadFile], File(alias="files")], path: str = Query("/")):
+    dest_path = normalize_path(path)
+
+    db = await get_db()
+    try:
+        ddb = DirDB(db)
+        if dest_path != "/" and not await ddb.dir_exists(dest_path):
+            raise HTTPException(400, f"目录不存在：{dest_path}")
+    finally:
+        await db.close()
+
+    results = []
+    for file in files:
+        try:
+            results.append(await _upload_one(file, dest_path))
+        except GitHubStorageError as e:
+            raise HTTPException(502, str(e))
+    return {"ok": True, "count": len(results), "files": results}
 
 
 @app.get("/api/download/{file_id}", dependencies=[Depends(require_auth)])
@@ -182,14 +191,29 @@ async def api_download(file_id: int, request: Request):
 
 @app.delete("/api/files/{file_id}", dependencies=[Depends(require_auth)])
 async def api_delete(file_id: int):
+    """Delete the GitHub asset and local index immediately."""
     db = await get_db()
     try:
         fdb = FileDB(db)
         f = await fdb.get_file(file_id)
         if not f:
             raise HTTPException(404, "文件不存在")
-        ok = await fdb.soft_delete(file_id, deleted_by="api")
-        return {"ok": ok, "message": "已移入回收站"}
+    finally:
+        await db.close()
+
+    errors = []
+    try:
+        await GitHubReleaseAssets().delete_asset(int(f["asset_id"]))
+    except Exception as e:
+        errors.append(str(e))
+
+    if errors:
+        raise HTTPException(502, "GitHub asset 删除失败：" + "; ".join(errors))
+
+    db = await get_db()
+    try:
+        ok = await FileDB(db).delete_index(file_id)
+        return {"ok": ok, "message": "已从 GitHub 和本地索引删除"}
     finally:
         await db.close()
 

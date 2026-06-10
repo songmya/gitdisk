@@ -152,6 +152,12 @@ class FileDB:
         await self.db.commit()
         return cursor.rowcount > 0
 
+    async def delete_index(self, file_id: int) -> bool:
+        """Delete a file index regardless of trash state after remote asset removal."""
+        cursor = await self.db.execute("DELETE FROM files WHERE id=?", (file_id,))
+        await self.db.commit()
+        return cursor.rowcount > 0
+
     async def list_deleted(self, limit: int = 50, offset: int = 0) -> list[dict]:
         cursor = await self.db.execute(
             """SELECT * FROM files WHERE deleted=1
