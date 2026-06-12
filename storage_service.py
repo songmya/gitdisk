@@ -163,7 +163,10 @@ async def delete_file_and_assets(file_id: int, include_deleted: bool = False) ->
         try:
             await storage.delete_asset(asset_id)
         except Exception as e:
-            errors.append(f"asset {asset_id}: {e}")
+            if "404 Not Found" in str(e):
+                pass
+            else:
+                errors.append(f"asset {asset_id}: {e}")
     if errors:
         return False, errors
 
